@@ -7,6 +7,9 @@
 import sys
 import json
 from copy import deepcopy
+from copy import copy
+from time import time
+
 
 # Simple point class that supports equality, addition, and rotations
 class Point:
@@ -24,6 +27,9 @@ class Point:
 
     def __add__(self, point):
         return Point(self.x + point.x, self.y + point.y)
+
+    def __sub__(self, point):
+        return Point(self.x - point.x, self.y - point.y)
 
     def __eq__(self, point):
         return self.x == point.x and self.y == point.y
@@ -61,50 +67,89 @@ class Game:
     def __init__(self, args):
         self.interpret_data(args)
 
-    def update_score(self, score, block, point):
-        all_points = [points + point for points in block]
+    def update_score(self, player, score, block, point):
+        score = copy(score)
+        all_points = [points + point for points in block[0]]
         for p in all_points:
             if p in map(Point, self.bonus_squares):
-                return score + 3*len(block)
+                score[player] += 3*len(block)
         else:
-            return score + len(block)
+            score[player] += len(block[0])
+        return score
 
     def actions(self, state):
         N = self.dimension - 1
         moves = []
-        for block in self.blocks:
-            block_list = map(lambda p: (p.x, p.y), block)
-            for rotations in range(0, 4):
-                new_block = self.rotate_block(block, rotations)
-                new_block_list = map(lambda p: (p.x,p.y), new_block)
-                if block_list == new_block_list:
-                    continue
-                for i in range(0, N * N):
-                    x = i / N
-                    y = i % N
-                    if self.can_place(new_block, Point(x,y)):
-                        moves.append((new_block, Point(x,y)))
+        player = state.to_move
+
+        def free_space(x, y):
+            if x < 0 or x > N or y < 0 or y > N: 
+                return False
+            if x != 0 and state.board[x-1][y] == player:
+                return False
+            if x != N and state.board[x+1][y] == player:
+                return False
+            if y != 0 and state.board[x][y-1] == player:
+                return False
+            if y != N and state.board[x][y+1] == player:
+                return False
+            return state.board[x][y] == -1
+
+        def calc_liberties():
+            liberties = []
+            for i in range(0, N * N):
+                x = i / N
+                y = i % N
+                if state.board[x][y] == state.to_move:
+                    for point in [(x-1,y-1), (x-1,y+1), (x+1,y-1), (x+1,y+1)]:
+                        if free_space(*point):
+                            if point not in liberties:
+                                liberties.append(point)
+            return liberties
+
+        liberties = calc_liberties()
+        if player == 0:
+            corner = (0,0)
+        elif player == 1:
+            corner = (0, 19)
+        elif player == 2:
+            corner = (19, 0)
+        elif player == 3:
+            corner = (19,19)
+        if state.board[corner[0]][corner[1]] == -1:
+            liberties = [corner]
+
+        for liberty in liberties:
+            liberty = Point(*liberty)
+            for (block, r) in state.blocks:
+                for dr in range(4):
+                    new_block = self.rotate_block(block, dr)
+                    for point in new_block:
+                        new_centered_block = map(lambda p: p - point, new_block)
+                        if self.can_place(new_centered_block, liberty):
+                            moves.append(((new_block,r+dr), liberty))
         return moves
 
     def result(self, state, (block, point)):
-        new_score = self.update_score(state.utility, block, point)
+        new_score = self.update_score(state.to_move, state.utility, block, point)
         new_board = deepcopy(state.board)
-        for p in [points + point for points in block]:
+        for p in [points + point for points in block[0]]:
             new_board[p.x][p.y] = state.to_move
         new_player = (state.to_move + 1) % 4
         new_blocks = deepcopy(state.blocks)
         index = -1
-        for (i, b) in enumerate(new_blocks):
+        for (i, (b,r)) in enumerate(new_blocks):
             if b == block:
                 index = i
         new_blocks.pop(index)
         return State(to_move=new_player, board=new_board, utility=new_score, blocks=new_blocks)
 
     def utility(self, state):
+        return 0
 
         player = state.to_move
         board = state.board
-        score = state.utility
+        score = state.utility[player]
 
         N = self.dimension - 1
         k = 2  # num_points + k * score
@@ -156,17 +201,15 @@ class Game:
     # find_move will be called and you must return where to go.
     # You must return a tuple (block index, # rotations, x, y)
     def find_move(self):
-        def alphabeta_search(state, d=1):
+        def alphabeta_search(state, d=0):
             player = state.to_move
             
             def max_value(state, alpha, beta, depth):
-                debug('IN MAX VALUE')
                 if cutoff_test(state, depth):
                     return self.utility(state)
                 v = -float("inf")
-                debug(len(self.actions(state)))
                 for a in self.actions(state):
-                    v = max(v, min_value(self.result(state, a),
+                    v = max(v, max_value(self.result(state, a),
                                          alpha, beta, depth+1))
                     if v >= beta:
                         return v
@@ -174,7 +217,6 @@ class Game:
                 return v
 
             def min_value(state, alpha, beta, depth):
-                debug('IN MIN VALUE')
                 if cutoff_test(state,depth):
                     return self.utility(state)
                 v = float("inf")
@@ -190,13 +232,15 @@ class Game:
             cutoff_test = lambda state,depth: depth>d or self.terminal_test(state)
             func = lambda a: min_value(self.result(state, a),-float("inf"), float("inf"), 0)
             return max(self.actions(state),key=func)
-        state = State(to_move=self.my_number, board=self.grid, utility=0, blocks=self.blocks)
-        result = alphabeta_search(state)
 
-        print >> sys.stderr, result
-        return (0,0,0,0)
-
-
+        our_blocks = map(lambda x: (x,0), self.blocks)
+        state = State(to_move=self.my_number, board=self.grid, utility=[0,0,0,0], blocks=our_blocks)
+        ((block, r), p) = alphabeta_search(state)
+        index = -1
+        for (i,b) in enumerate(self.blocks):
+            if block == b:
+                index = i
+        return (index, r, p.x, p.y)
 
     # Checks if a block can be placed at the given point
     def can_place(self, block, point):
@@ -228,7 +272,6 @@ class Game:
 
         if self.grid[corner.x][corner.y] < 0 and not onAbsCorner: return False
         if not onAbsCorner and not onRelCorner: return False
-
         return True
 
     # rotates block 90deg counterclockwise
