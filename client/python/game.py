@@ -60,6 +60,86 @@ class Game:
     def __init__(self, args):
         self.interpret_data(args)
 
+        def update_score(self, score, block, point):
+        all_points = [points + point for points in block]
+        if set(all_points) & set(self.bonus_squares):
+            return score + 3*len(block)
+        else:
+            return score + len(block)
+
+    def actions(self, state):
+        N = self.dimension - 1
+        moves = []
+        for block in self.blocks:
+        for rotations in range(0, 4):
+            new_block = self.rotate_block(block, rotations)
+            for i in range(0, N * N):
+                x = i / N
+                y = i % N
+                if self.can_place(new_block, Point(x,y)):
+                    moves.append(new_block, Point(x,y))
+        return moves
+
+    def result(state, (block, point)):
+        new_score = self.update_score(state.score, block, point)
+        new_board = deepcopy(state.board)
+        for (x,y) in [points + point for points in block]:
+            new_board[x][y] = state.player
+        new_player = (player + 1) % 4
+        new_blocks = deepcopy(state.blocks)
+        new_blocks.remove(block)
+        return State(to_move=new_player, board=new_board, utility=new_score, blocks=blocks)
+
+    def utility(self, state):
+
+        player = state.player
+        board = state.board
+        score = state.score
+
+        N = self.dimension - 1
+        k = 2  # num_points + k * score
+        C = 4  # Distance from liberties to be tested
+
+        def free_space(x, y):
+            if x < 0 or x > N or y < 0 or y > N: 
+                return False
+            if x != 0 and board[x-1][y] == player:
+                return False
+            if x != N and board[x+1][y] == player:
+                return False
+            if y != 0 and board[x][y-1] == player:
+                return False
+            if y != N and board[x][y+1] == player:
+                return False
+            return board[x][y] == -1
+
+        def calc_liberties():
+            liberties = []
+            for i in range(0, N * N):
+                x = i / N
+                y = i % N
+                if board[x][y] == player:
+                    for point in [(x-1,y-1), (x-1,y+1), (x+1,y-1), (x+1,y+1)]:
+                        if free_space(*point):
+                            if point not in liberties:
+                                liberties.append(point)
+            return liberties
+
+
+        liberties = calc_liberties()
+        empty_points = []
+        for point in libteries:
+            for x_offset in range(C):
+                for y_offset in range(C - x_offset):
+                    new_point = (point.x + x_offset, point.y + y_offset)
+                    if free_space(*new_point):
+                        if new_point not in empty_points:
+                            empty_points.append(new_point)
+
+        num_points = len(empty_points)
+        return num_points + k * score
+
+
     # find_move is your place to start. When it's your turn,
     # find_move will be called and you must return where to go.
     # You must return a tuple (block index, # rotations, x, y)
