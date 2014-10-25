@@ -6,6 +6,7 @@
 
 import sys
 import json
+from copy import deepcopy
 
 # Simple point class that supports equality, addition, and rotations
 class Point:
@@ -60,10 +61,11 @@ class Game:
     def __init__(self, args):
         self.interpret_data(args)
 
-        def update_score(self, score, block, point):
+    def update_score(self, score, block, point):
         all_points = [points + point for points in block]
-        if set(all_points) & set(self.bonus_squares):
-            return score + 3*len(block)
+        for p in all_points:
+            if p in map(Point, self.bonus_squares):
+                return score + 3*len(block)
         else:
             return score + len(block)
 
@@ -71,30 +73,38 @@ class Game:
         N = self.dimension - 1
         moves = []
         for block in self.blocks:
-        for rotations in range(0, 4):
-            new_block = self.rotate_block(block, rotations)
-            for i in range(0, N * N):
-                x = i / N
-                y = i % N
-                if self.can_place(new_block, Point(x,y)):
-                    moves.append(new_block, Point(x,y))
+            block_list = map(lambda p: (p.x, p.y), block)
+            for rotations in range(0, 4):
+                new_block = self.rotate_block(block, rotations)
+                new_block_list = map(lambda p: (p.x,p.y), new_block)
+                if block_list == new_block_list:
+                    continue
+                for i in range(0, N * N):
+                    x = i / N
+                    y = i % N
+                    if self.can_place(new_block, Point(x,y)):
+                        moves.append((new_block, Point(x,y)))
         return moves
 
-    def result(state, (block, point)):
-        new_score = self.update_score(state.score, block, point)
+    def result(self, state, (block, point)):
+        new_score = self.update_score(state.utility, block, point)
         new_board = deepcopy(state.board)
-        for (x,y) in [points + point for points in block]:
-            new_board[x][y] = state.player
-        new_player = (player + 1) % 4
+        for p in [points + point for points in block]:
+            new_board[p.x][p.y] = state.to_move
+        new_player = (state.to_move + 1) % 4
         new_blocks = deepcopy(state.blocks)
-        new_blocks.remove(block)
-        return State(to_move=new_player, board=new_board, utility=new_score, blocks=blocks)
+        index = -1
+        for (i, b) in enumerate(new_blocks):
+            if b == block:
+                index = i
+        new_blocks.pop(index)
+        return State(to_move=new_player, board=new_board, utility=new_score, blocks=new_blocks)
 
     def utility(self, state):
 
-        player = state.player
+        player = state.to_move
         board = state.board
-        score = state.score
+        score = state.utility
 
         N = self.dimension - 1
         k = 2  # num_points + k * score
@@ -128,7 +138,7 @@ class Game:
 
         liberties = calc_liberties()
         empty_points = []
-        for point in libteries:
+        for point in liberties:
             for x_offset in range(C):
                 for y_offset in range(C - x_offset):
                     new_point = (point.x + x_offset, point.y + y_offset)
@@ -139,24 +149,54 @@ class Game:
         num_points = len(empty_points)
         return num_points + k * score
 
+    def terminal_test(self, state):
+        return not self.actions(state)
 
     # find_move is your place to start. When it's your turn,
     # find_move will be called and you must return where to go.
     # You must return a tuple (block index, # rotations, x, y)
     def find_move(self):
-        moves = []
-        N = self.dimension
-        for index, block in enumerate(self.blocks):
-            for i in range(0, N * N):
-                x = i / N
-                y = i % N
+        def alphabeta_search(state, d=1):
+            player = state.to_move
+            
+            def max_value(state, alpha, beta, depth):
+                debug('IN MAX VALUE')
+                if cutoff_test(state, depth):
+                    return self.utility(state)
+                v = -float("inf")
+                debug(len(self.actions(state)))
+                for a in self.actions(state):
+                    v = max(v, min_value(self.result(state, a),
+                                         alpha, beta, depth+1))
+                    if v >= beta:
+                        return v
+                    alpha = max(alpha, v)
+                return v
 
-                for rotations in range(0, 4):
-                    new_block = self.rotate_block(block, rotations)
-                    if self.can_place(new_block, Point(x, y)):
-                        return (index, rotations, x, y)
+            def min_value(state, alpha, beta, depth):
+                debug('IN MIN VALUE')
+                if cutoff_test(state,depth):
+                    return self.utility(state)
+                v = float("inf")
+                for a in self.actions(state):
+                    v = min(v, max_value(self.result(state, a),
+                                         alpha, beta, depth+1))
+                    if v <= alpha:
+                        return v
+                    beta = min (beta, v)
+                return v
 
-        return (0, 0, 0, 0)
+            # Body
+            cutoff_test = lambda state,depth: depth>d or self.terminal_test(state)
+            func = lambda a: min_value(self.result(state, a),-float("inf"), float("inf"), 0)
+            return max(self.actions(state),key=func)
+        state = State(to_move=self.my_number, board=self.grid, utility=0, blocks=self.blocks)
+        result = alphabeta_search(state)
+
+        print >> sys.stderr, result
+        return (0,0,0,0)
+
+
 
     # Checks if a block can be placed at the given point
     def can_place(self, block, point):
