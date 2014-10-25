@@ -37,6 +37,18 @@ class Point:
     def distance(self, point):
         return abs(point.x - self.x) + abs(point.y - self.y)
 
+class State:
+    blocks = []
+    board = []
+    utility = []
+    to_move = -1
+
+    def __init__(self, blocks, board, utility, to_move):
+      self.blocks = blocks
+      self.board = board
+      self.utility = utility
+      self.to_move = to_move
+
 class Game:
     blocks = []
     grid = []
